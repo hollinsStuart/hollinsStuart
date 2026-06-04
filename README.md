@@ -26,5 +26,6 @@ Currently diving deep into database internals through CMU 15-445.
 
 ---
 
-[![GitHub Stats](https://github-readme-stats.vercel.app/api?username=hollinsStuart&theme=ambient_gradient&show_icons=true&hide_border=true)](https://github.com/anuraghazra/github-readme-stats)
-![Top Languages](https://github-readme-stats.vercel.app/api/top-langs/?username=hollinsStuart&layout=compact&hide_border=true)
+![GitHub Stats](./profile/stats.svg)
+
+![Top Languages](./profile/top-langs.svg)
