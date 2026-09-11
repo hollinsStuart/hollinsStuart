@@ -6,6 +6,7 @@ Currently diving deep into database internals through CMU 15-445.
 ## 🔧 What I'm Working On
 
 - 🗄️ **[CMU 15-445 BusTub](https://15445.courses.cs.cmu.edu/)** — Building a relational database from scratch (buffer pool, B+ trees, query execution, concurrency control)
+- 📈 **[TradingAgents](https://github.com/TauricResearch/TradingAgents)** — Contributing to a multi-agent LLM financial trading framework that simulates a trading firm: analyst, researcher, trader, and risk-management agents built on LangGraph collaborate and debate to reach trading decisions
 - 🤖 **Machine Learning Projects** — Exploring model training and inference pipelines
 
 ## 🛠️ Tech Stack
