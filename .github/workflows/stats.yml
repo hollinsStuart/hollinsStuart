@@ -1,29 +1,102 @@
+---
 name: Update README cards
-on:
+
+# Generates the two cards embedded at the end of README.md and commits them
+# back to this repository.
+#
+# Why a PAT is required:
+#   The stats card needs GitHub's user-level contribution data
+#   (contributionsCollection / repositoriesContributedTo). The automatic
+#   GITHUB_TOKEN is a repository-scoped GitHub App installation token, so the
+#   GraphQL API rejects those fields with "Resource not accessible by
+#   integration" (this has been failing since 2026-07-23). A classic Personal
+#   Access Token with the `read:user` scope is used instead and is read from
+#   the Actions secret STATS_TOKEN. Add the `repo` scope only if private
+#   contributions should be included in the cards too.
+#
+# Guarantee:
+#   README.md only embeds the committed files ./profile/*.svg, which are served
+#   by GitHub's own raw CDN. Generation writes to temporary files and replaces
+#   the committed cards only after both pass validation, so a failed fetch,
+#   rate limit, expired token, broken action, or removed upstream can never
+#   overwrite a working card. The worst case is a stale card, not a broken one.
+#
+# Freshness heartbeat:
+#   Every fully successful run also rewrites profile/last-update.json with a
+#   timestamp and the hashes of the published cards. The Verify README cards
+#   workflow alerts (failing run + tracking issue) when that timestamp is more
+#   than 30 hours old, i.e. when at least one daily update was missed.
+
+on:  # yamllint disable-line rule:truthy
   schedule:
     - cron: "0 0 * * *"
   workflow_dispatch:
+
+concurrency:
+  group: readme-cards
+  cancel-in-progress: false
+
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - name: Check STATS_TOKEN secret
+        env:
+          STATS_TOKEN: ${{ secrets.STATS_TOKEN }}
+        run: |
+          if [ -z "$STATS_TOKEN" ]; then
+            echo "::error::Missing repository secret STATS_TOKEN."
+            echo "::error::Create a classic PAT with the read:user scope and save it as a repository secret named STATS_TOKEN."
+            echo "::error::Add the repo scope too only if private contributions should be counted."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v5
+
       - name: Generate stats card
-        uses: soulteary/github-readme-stats-action@v1.0.0
+        uses: soulteary/github-readme-stats-action@f6a050a9d2f1af6235f1eecafe00894b053ccb5d  # v1.0.0
         with:
           card: stats
           options: "username=hollinsStuart&show_icons=true&hide_border=true&theme=dark"
-          path: profile/stats.svg
-          token: ${{ secrets.GITHUB_TOKEN }}
+          path: profile/.tmp-stats.svg
+          token: ${{ secrets.STATS_TOKEN }}
+          version: v1.0.0
+
       - name: Generate top languages card
-        uses: soulteary/github-readme-stats-action@v1.0.0
+        uses: soulteary/github-readme-stats-action@f6a050a9d2f1af6235f1eecafe00894b053ccb5d  # v1.0.0
         with:
           card: top-langs
           options: "username=hollinsStuart&layout=compact&hide_border=true&theme=dark"
-          path: profile/top-langs.svg
-          token: ${{ secrets.GITHUB_TOKEN }}
-      - uses: stefanzweifel/git-auto-commit-action@v5
+          path: profile/.tmp-top-langs.svg
+          token: ${{ secrets.STATS_TOKEN }}
+          version: v1.0.0
+
+      - name: Validate and publish generated cards
+        run: |
+          set -euo pipefail
+
+          # Both generated cards must be valid before either committed card is
+          # replaced, so a partial failure can never mix old and broken cards.
+          bash .github/scripts/check-card.sh profile/.tmp-stats.svg 'data-testid="stars"'
+          bash .github/scripts/check-card.sh profile/.tmp-top-langs.svg 'Most Used Languages'
+
+          mv profile/.tmp-stats.svg profile/stats.svg
+          mv profile/.tmp-top-langs.svg profile/top-langs.svg
+          echo "Both cards validated; profile/stats.svg and profile/top-langs.svg replaced."
+
+      - name: Record last successful update
+        run: |
+          set -euo pipefail
+
+          stats_sha=$(sha256sum profile/stats.svg | awk '{print $1}')
+          langs_sha=$(sha256sum profile/top-langs.svg | awk '{print $1}')
+          printf '{\n  "updated_at": "%s",\n  "stats_sha256": "%s",\n  "top_langs_sha256": "%s"\n}\n' \
+            "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$stats_sha" "$langs_sha" > profile/last-update.json
+          echo "Heartbeat written: $(grep updated_at profile/last-update.json)"
+
+      - uses: stefanzweifel/git-auto-commit-action@v7
         with:
           commit_message: "chore: update github stats cards"

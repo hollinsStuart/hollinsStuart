@@ -1,0 +1,108 @@
+---
+name: Verify README cards
+
+# Safety net for the files embedded in the profile README. The updater workflow
+# already validates cards before committing, so a broken card should never
+# reach main; this job additionally guards against manual edits and against
+# silently stopped updates.
+#
+# It checks three things:
+#   1. both committed SVGs pass .github/scripts/check-card.sh
+#   2. README.md still references both committed SVGs
+#   3. profile/last-update.json is fresh (< 30h old) and its hashes match the
+#      committed SVGs
+#
+# On failure it opens (or keeps) a tracking issue and the workflow run goes
+# red; when everything is healthy again the issue is closed automatically.
+
+on:  # yamllint disable-line rule:truthy
+  push:
+    paths:
+      - README.md
+      - profile/*.svg
+      - profile/last-update.json
+      - .github/workflows/stats.yml
+      - .github/workflows/verify-cards.yml
+      - .github/scripts/*.sh
+  workflow_run:
+    workflows: ["Update README cards"]
+    types: [completed]
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Verify committed cards, README references, and freshness
+        id: check
+        run: |
+          set -euo pipefail
+
+          status=0
+
+          bash .github/scripts/check-card.sh profile/stats.svg 'data-testid="stars"' || status=1
+          bash .github/scripts/check-card.sh profile/top-langs.svg 'Most Used Languages' || status=1
+
+          check_reference() {
+            local reference="$1"
+            if grep -qF "($reference)" README.md; then
+              echo "README references $reference"
+            else
+              echo "::error file=README.md::README no longer references $reference"
+              status=1
+            fi
+          }
+
+          check_reference './profile/stats.svg'
+          check_reference './profile/top-langs.svg'
+
+          bash .github/scripts/check-freshness.sh \
+            profile/last-update.json profile/stats.svg profile/top-langs.svg 30 || status=1
+
+          exit "$status"
+
+      - name: Open tracking issue
+        if: failure() && steps.check.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          title="README cards are stale or invalid"
+          if gh issue list --state open --limit 100 --json title --jq '.[].title' | grep -qxF "$title"; then
+            echo "Tracking issue is already open."
+            exit 0
+          fi
+
+          body="The scheduled card check failed on $(date -u +%Y-%m-%dT%H:%M:%SZ)."
+          body+=" The README still serves the last good SVGs, so nothing is broken, but updates have stopped."
+          body+=" Check the 'Update README cards' workflow (usually a missing or expired STATS_TOKEN)."
+          body+=" Run: ${GITHUB_SERVER_URL:-https://github.com}/${GITHUB_REPOSITORY:-unknown/unknown}/actions/runs/${GITHUB_RUN_ID:-0}"
+          gh issue create --title "$title" --body "$body"
+
+      - name: Close tracking issue when healthy
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          title="README cards are stale or invalid"
+          issue_numbers=$(gh issue list --state open --limit 100 --json number,title \
+            --jq ".[] | select(.title == \"$title\") | .number")
+          if [ -n "$issue_numbers" ]; then
+            while IFS= read -r number; do
+              [ -n "$number" ] && gh issue close "$number" --comment "The cards are fresh and valid again."
+            done <<< "$issue_numbers"
+          else
+            echo "No tracking issue to close."
+          fi
